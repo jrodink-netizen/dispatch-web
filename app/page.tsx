@@ -6,14 +6,22 @@ import { useRouter } from 'next/navigation'
 
 export default function Page() {
   const router = useRouter()
-  const [loading, setLoading] = useState(true)
+
   const [user, setUser] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
   const [rides, setRides] = useState<any[]>([])
   const [selectedDate, setSelectedDate] = useState(new Date())
+
+  const [editingRide, setEditingRide] = useState<any>(null)
+  const [showCompleted, setShowCompleted] = useState(false)
 
   useEffect(() => {
     checkUser()
   }, [])
+
+  useEffect(() => {
+    if (user) loadRides()
+  }, [selectedDate, user])
 
   async function checkUser() {
     const { data } = await supabase.auth.getUser()
@@ -22,7 +30,6 @@ export default function Page() {
       router.push('/login')
     } else {
       setUser(data.user)
-      loadRides()
     }
 
     setLoading(false)
@@ -44,7 +51,6 @@ export default function Page() {
     const newDate = new Date(selectedDate)
     newDate.setDate(newDate.getDate() + amount)
     setSelectedDate(newDate)
-    setTimeout(() => loadRides(), 100)
   }
 
   function getStatusColor(status: string) {
@@ -60,6 +66,21 @@ export default function Page() {
     }
   }
 
+  async function updateRide() {
+    await supabase
+      .from('rides')
+      .update({
+        status: editingRide.status,
+        notes: editingRide.notes,
+        departure_time: editingRide.departure_time,
+        arrival_time: editingRide.arrival_time
+      })
+      .eq('id', editingRide.id)
+
+    setEditingRide(null)
+    loadRides()
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">
@@ -69,6 +90,10 @@ export default function Page() {
   }
 
   if (!user) return null
+
+  const filteredRides = showCompleted
+    ? rides.filter(r => r.status === 'afgerond')
+    : rides.filter(r => r.status !== 'afgerond')
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-8">
@@ -101,17 +126,27 @@ export default function Page() {
         </div>
       </div>
 
+      <div className="mb-6">
+        <button
+          onClick={() => setShowCompleted(!showCompleted)}
+          className="px-4 py-2 bg-gray-700 rounded"
+        >
+          {showCompleted ? 'Toon actieve ritten' : 'Toon afgeronde ritten'}
+        </button>
+      </div>
+
       <div className="grid gap-4">
-        {rides.length === 0 && (
+        {filteredRides.length === 0 && (
           <div className="text-gray-400">
-            Geen ritten voor deze dag.
+            Geen ritten voor deze selectie.
           </div>
         )}
 
-        {rides.map((ride) => (
+        {filteredRides.map((ride) => (
           <div
             key={ride.id}
-            className={`p-4 rounded shadow ${getStatusColor(
+            onClick={() => setEditingRide(ride)}
+            className={`p-4 rounded shadow cursor-pointer ${getStatusColor(
               ride.status
             )}`}
           >
@@ -133,13 +168,88 @@ export default function Page() {
                 📝 {ride.notes}
               </div>
             )}
-
-            <div className="mt-2 text-xs">
-              Status: {ride.status}
-            </div>
           </div>
         ))}
       </div>
+
+      {editingRide && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center">
+          <div className="bg-gray-800 p-6 rounded w-96">
+            <h2 className="text-xl mb-4">Rit bewerken</h2>
+
+            <label className="text-sm">Vertrek</label>
+            <input
+              type="time"
+              value={editingRide.departure_time || ''}
+              onChange={e =>
+                setEditingRide({
+                  ...editingRide,
+                  departure_time: e.target.value
+                })
+              }
+              className="w-full mb-3 p-2 bg-gray-700 rounded"
+            />
+
+            <label className="text-sm">Aankomst</label>
+            <input
+              type="time"
+              value={editingRide.arrival_time || ''}
+              onChange={e =>
+                setEditingRide({
+                  ...editingRide,
+                  arrival_time: e.target.value
+                })
+              }
+              className="w-full mb-3 p-2 bg-gray-700 rounded"
+            />
+
+            <label className="text-sm">Status</label>
+            <select
+              value={editingRide.status}
+              onChange={e =>
+                setEditingRide({
+                  ...editingRide,
+                  status: e.target.value
+                })
+              }
+              className="w-full mb-3 p-2 bg-gray-700 rounded"
+            >
+              <option value="gepland">Gepland</option>
+              <option value="onderweg">Onderweg</option>
+              <option value="afgerond">Afgerond</option>
+              <option value="geannuleerd">Geannuleerd</option>
+            </select>
+
+            <label className="text-sm">Notitie</label>
+            <textarea
+              value={editingRide.notes || ''}
+              onChange={e =>
+                setEditingRide({
+                  ...editingRide,
+                  notes: e.target.value
+                })
+              }
+              className="w-full mb-4 p-2 bg-gray-700 rounded"
+            />
+
+            <div className="flex justify-between">
+              <button
+                onClick={() => setEditingRide(null)}
+                className="px-4 py-2 bg-gray-600 rounded"
+              >
+                Annuleren
+              </button>
+
+              <button
+                onClick={updateRide}
+                className="px-4 py-2 bg-blue-600 rounded"
+              >
+                Opslaan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
