@@ -11,9 +11,7 @@ export default function Page() {
   const [loading, setLoading] = useState(true)
   const [rides, setRides] = useState<any[]>([])
   const [selectedDate, setSelectedDate] = useState(new Date())
-
   const [editingRide, setEditingRide] = useState<any>(null)
-  const [showCompleted, setShowCompleted] = useState(false)
 
   useEffect(() => {
     checkUser()
@@ -91,10 +89,6 @@ export default function Page() {
 
   if (!user) return null
 
-  const filteredRides = showCompleted
-    ? rides.filter(r => r.status === 'afgerond')
-    : rides.filter(r => r.status !== 'afgerond')
-
   return (
     <div className="min-h-screen bg-gray-900 text-white p-8">
       <div className="flex justify-between items-center mb-10">
@@ -126,50 +120,47 @@ export default function Page() {
         </div>
       </div>
 
-      <div className="mb-6">
-        <button
-          onClick={() => setShowCompleted(!showCompleted)}
-          className="px-4 py-2 bg-gray-700 rounded"
-        >
-          {showCompleted ? 'Toon actieve ritten' : 'Toon afgeronde ritten'}
-        </button>
-      </div>
-
       <div className="grid gap-4">
-        {filteredRides.length === 0 && (
+        {rides.length === 0 && (
           <div className="text-gray-400">
-            Geen ritten voor deze selectie.
+            Geen ritten voor deze dag.
           </div>
         )}
 
-        {filteredRides.map((ride) => (
-          <div
-            key={ride.id}
-            onClick={() => setEditingRide(ride)}
-            className={`p-4 rounded shadow cursor-pointer ${getStatusColor(
-              ride.status
-            )}`}
-          >
-            <div className="text-sm">
-              {ride.departure_time?.slice(0, 5)} -{' '}
-              {ride.arrival_time?.slice(0, 5)}
-            </div>
+        {rides.map((ride) => {
+          const isOwnRide = ride.chauffeur_id === user.id
 
-            <div className="text-lg font-semibold">
-              {ride.customer_name}
-            </div>
-
-            <div className="text-sm">
-              {ride.from_location} → {ride.to_location}
-            </div>
-
-            {ride.notes && (
-              <div className="text-xs mt-2 opacity-80">
-                📝 {ride.notes}
+          return (
+            <div
+              key={ride.id}
+              onClick={() => {
+                if (isOwnRide) setEditingRide(ride)
+              }}
+              className={`p-4 rounded shadow ${
+                getStatusColor(ride.status)
+              } ${isOwnRide ? 'cursor-pointer' : 'opacity-70'}`}
+            >
+              <div className="text-sm">
+                {ride.departure_time?.slice(0, 5)} -{' '}
+                {ride.arrival_time?.slice(0, 5)}
               </div>
-            )}
-          </div>
-        ))}
+
+              <div className="text-lg font-semibold">
+                {ride.customer_name}
+              </div>
+
+              <div className="text-sm">
+                {ride.from_location} → {ride.to_location}
+              </div>
+
+              {ride.notes && (
+                <div className="text-xs mt-2 opacity-80">
+                  📝 {ride.notes}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {editingRide && (
