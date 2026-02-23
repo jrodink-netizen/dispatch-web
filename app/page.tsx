@@ -1,8 +1,7 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 
 type Driver = {
@@ -10,104 +9,114 @@ type Driver = {
   name: string
 }
 
-type RideStatus = 'gepland' | 'onderweg' | 'afgerond' | 'geannuleerd'
-
 type Ride = {
   id: string
   date: string
   departure_time: string | null
   arrival_time: string | null
+  customer_name: string
   from_location: string
   to_location: string
-  customer_name: string
-  notes: string | null
-  status: RideStatus
   chauffeur_id: string
+  status: string
+  notes: string | null
 }
 
-type RideFormState = {
+type RideForm = {
   id?: string
-  chauffeur_id: string
   date: string
   departure_time: string
   arrival_time: string
+  customer_name: string
   from_location: string
   to_location: string
-  customer_name: string
+  chauffeur_id: string
+  status: string
   notes: string
-  status: RideStatus
 }
 
-function formatTime(t: string | null) {
+function timeLabel(t: string | null) {
   if (!t) return '--:--'
   return t.slice(0, 5)
 }
 
-function statusLabel(status: RideStatus) {
+function statusColor(status: string) {
   switch (status) {
-    case 'gepland':
-      return 'Gepland'
     case 'onderweg':
-      return 'Onderweg'
+      return 'bg-yellow-500'
+    case 'aangekomen':
+      return 'bg-sky-500'
     case 'afgerond':
-      return 'Afgerond'
+      return 'bg-emerald-500'
     case 'geannuleerd':
-      return 'Geannuleerd'
+      return 'bg-red-600'
+    default:
+      return 'bg-blue-600'
   }
 }
 
-function statusClasses(status: RideStatus) {
-  switch (status) {
-    case 'gepland':
-      return 'bg-blue-600/90 border-blue-500'
-    case 'onderweg':
-      return 'bg-yellow-500/90 border-yellow-400'
-    case 'afgerond':
-      return 'bg-emerald-600/90 border-emerald-500'
-    case 'geannuleerd':
-      return 'bg-red-600/90 border-red-500'
-    default:
-      return 'bg-blue-600/90 border-blue-500'
-  }
+function formatDateLong(d: Date) {
+  return d.toLocaleDateString('nl-NL', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  })
+}
+
+function formatDateShort(d: Date) {
+  return d.toLocaleDateString('nl-NL', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'numeric'
+  })
 }
 
 export default function Page() {
   const router = useRouter()
-  const [loadingUser, setLoadingUser] = useState(true)
+
+  const [authChecked, setAuthChecked] = useState(false)
   const [user, setUser] = useState<any>(null)
 
-  const [selectedDate, setSelectedDate] = useState(() => new Date())
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [rides, setRides] = useState<Ride[]>([])
-  const [showCompleted, setShowCompleted] = useState(false)
+  const [selectedDate, setSelectedDate] = useState(new Date())
+  const [loading, setLoading] = useState(true)
 
-  const [modalOpen, setModalOpen] = useState(false)
-  const [modalSaving, setModalSaving] = useState(false)
-  const [form, setForm] = useState<RideFormState | null>(null)
+  const [showForm, setShowForm] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState<RideForm | null>(null)
 
-  // ------ AUTH ------
+  // ---------- AUTH ----------
   useEffect(() => {
-    ;(async () => {
+    async function checkUser() {
       const { data } = await supabase.auth.getUser()
+
       if (!data.user) {
         router.push('/login')
-      } else {
-        setUser(data.user)
+        return
       }
-      setLoadingUser(false)
-    })()
+
+      setUser(data.user)
+      setAuthChecked(true)
+    }
+
+    checkUser()
   }, [router])
 
-  // ------ DATA LADEN ------
+  // ---------- DATA LADEN ----------
   useEffect(() => {
-    if (!user) return
-    void loadDrivers()
-  }, [user])
+    if (!authChecked) return
 
-  useEffect(() => {
-    if (!user) return
-    void loadRides()
-  }, [user, selectedDate])
+    async function loadAll() {
+      setLoading(true)
+      await Promise.all([loadDrivers(), loadRides()])
+      setLoading(false)
+    }
+
+    loadAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authChecked, selectedDate])
 
   async function loadDrivers() {
     const { data, error } = await supabase
@@ -116,9 +125,10 @@ export default function Page() {
       .order('name', { ascending: true })
 
     if (error) {
-      console.error(error)
+      console.error('Fout bij laden chauffeurs', error)
       return
     }
+
     setDrivers(data || [])
   }
 
@@ -132,438 +142,316 @@ export default function Page() {
       .order('departure_time', { ascending: true })
 
     if (error) {
-      console.error(error)
+      console.error('Fout bij laden ritten', error)
       return
     }
-    setRides((data || []) as Ride[])
+
+    setRides((data as Ride[]) || [])
   }
 
-  // ------ DATUM WISSELEN ------
+  // ---------- DAG WISSELEN ----------
   function changeDay(delta: number) {
     const d = new Date(selectedDate)
     d.setDate(d.getDate() + delta)
     setSelectedDate(d)
   }
 
-  const niceDate = useMemo(
-    () =>
-      selectedDate.toLocaleDateString('nl-NL', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      }),
-    [selectedDate]
-  )
+  function goToday() {
+    setSelectedDate(new Date())
+  }
 
-  // ---------- MODAL OPEN / FORM VULLEN ----------
-  function openNewRideModal() {
+  // ---------- FORM OPENEN ----------
+  function openNewRide() {
     const dateStr = selectedDate.toISOString().split('T')[0]
-    const firstDriverId = drivers[0]?.id ?? ''
+    const defaultDriver = drivers[0]?.id ?? ''
 
     setForm({
-      chauffeur_id: firstDriverId,
       date: dateStr,
-      departure_time: '08:00',
-      arrival_time: '09:00',
+      departure_time: '',
+      arrival_time: '',
+      customer_name: '',
       from_location: '',
       to_location: '',
-      customer_name: '',
-      notes: '',
-      status: 'gepland'
+      chauffeur_id: defaultDriver,
+      status: 'gepland',
+      notes: ''
     })
-    setModalOpen(true)
+    setShowForm(true)
   }
 
-  function openEditRideModal(ride: Ride) {
+  function openEditRide(ride: Ride) {
     setForm({
       id: ride.id,
-      chauffeur_id: ride.chauffeur_id,
       date: ride.date,
-      departure_time: ride.departure_time?.slice(0, 5) || '08:00',
-      arrival_time: ride.arrival_time?.slice(0, 5) || '09:00',
+      departure_time: ride.departure_time?.slice(0, 5) ?? '',
+      arrival_time: ride.arrival_time?.slice(0, 5) ?? '',
+      customer_name: ride.customer_name,
       from_location: ride.from_location,
       to_location: ride.to_location,
-      customer_name: ride.customer_name,
-      notes: ride.notes || '',
-      status: ride.status
+      chauffeur_id: ride.chauffeur_id,
+      status: ride.status,
+      notes: ride.notes ?? ''
     })
-    setModalOpen(true)
+    setShowForm(true)
   }
 
-  function closeModal() {
-    setModalOpen(false)
+  function closeForm() {
+    setShowForm(false)
     setForm(null)
   }
 
-  function handleFormChange<K extends keyof RideFormState>(
-    key: K,
-    value: RideFormState[K]
-  ) {
-    if (!form) return
-    setForm({ ...form, [key]: value })
-  }
-
-  // ---------- OPSLAAN ----------
-  async function saveRide() {
+  // ---------- FORM OPSLAAN ----------
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
     if (!form) return
 
     if (
-      !form.customer_name.trim() ||
-      !form.from_location.trim() ||
-      !form.to_location.trim()
+      !form.customer_name ||
+      !form.from_location ||
+      !form.to_location ||
+      !form.departure_time ||
+      !form.arrival_time ||
+      !form.chauffeur_id
     ) {
-      alert('Vul minimaal klant, van en naar in.')
+      alert('Vul alle verplichte velden in.')
       return
     }
 
-    if (!form.departure_time || !form.arrival_time) {
-      alert('Vertrek- en aankomsttijd zijn verplicht.')
-      return
+    setSaving(true)
+
+    const payload = {
+      date: form.date,
+      customer_name: form.customer_name,
+      from_location: form.from_location,
+      to_location: form.to_location,
+      departure_time: form.departure_time,
+      arrival_time: form.arrival_time,
+      chauffeur_id: form.chauffeur_id,
+      status: form.status,
+      notes: form.notes || null
     }
 
-    setModalSaving(true)
-
-    try {
-      if (form.id) {
-        // update
-        const { error } = await supabase
-          .from('rides')
-          .update({
-            chauffeur_id: form.chauffeur_id,
-            date: form.date,
-            departure_time: form.departure_time,
-            arrival_time: form.arrival_time,
-            from_location: form.from_location,
-            to_location: form.to_location,
-            customer_name: form.customer_name,
-            notes: form.notes,
-            status: form.status
-          })
-          .eq('id', form.id)
-
-        if (error) throw error
-
-        setRides((prev) =>
-          prev
-            .map((r) =>
-              r.id === form.id
-                ? {
-                    ...r,
-                    chauffeur_id: form.chauffeur_id,
-                    date: form.date,
-                    departure_time: form.departure_time,
-                    arrival_time: form.arrival_time,
-                    from_location: form.from_location,
-                    to_location: form.to_location,
-                    customer_name: form.customer_name,
-                    notes: form.notes,
-                    status: form.status
-                  }
-                : r
-            )
-            .slice()
-            .sort((a, b) =>
-              (a.departure_time || '').localeCompare(b.departure_time || '')
-            )
-        )
-      } else {
-        // insert
-        const { data, error } = await supabase
-          .from('rides')
-          .insert([
-            {
-              chauffeur_id: form.chauffeur_id,
-              date: form.date,
-              departure_time: form.departure_time,
-              arrival_time: form.arrival_time,
-              from_location: form.from_location,
-              to_location: form.to_location,
-              customer_name: form.customer_name,
-              notes: form.notes,
-              status: form.status
-            }
-          ])
-          .select('*')
-          .single()
-
-        if (error) throw error
-
-        setRides((prev) =>
-          [...prev, data as Ride].sort((a, b) =>
-            (a.departure_time || '').localeCompare(b.departure_time || '')
-          )
-        )
-      }
-
-      closeModal()
-    } catch (e: any) {
-      console.error(e)
-      alert('Fout bij opslaan: ' + e.message)
-    } finally {
-      setModalSaving(false)
+    let error
+    if (form.id) {
+      const res = await supabase.from('rides').update(payload).eq('id', form.id)
+      error = res.error
+    } else {
+      const res = await supabase.from('rides').insert([payload])
+      error = res.error
     }
-  }
 
-  // ------- STATUS DIRECT WIJZIGEN OP CARD -------
-  async function updateRideStatus(id: string, status: RideStatus) {
-    setRides((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status } : r))
-    )
-
-    const { error } = await supabase
-      .from('rides')
-      .update({ status })
-      .eq('id', id)
+    setSaving(false)
 
     if (error) {
-      console.error(error)
-      alert('Fout bij updaten status.')
-      // eventueel opnieuw laden
-      void loadRides()
+      console.error('Fout bij opslaan rit', error)
+      alert('Fout bij opslaan: ' + error.message)
+      return
     }
+
+    closeForm()
+    await loadRides() // direct vernieuwen
   }
 
-  // ------- EXPORT EXCEL -------
-  function exportToExcel() {
-    const rows = rides.map((r) => ({
-      Datum: r.date,
-      Chauffeur:
-        drivers.find((d) => d.id === r.chauffeur_id)?.name || 'Onbekend',
-      Vertrek: formatTime(r.departure_time),
-      Aankomst: formatTime(r.arrival_time),
-      Klant: r.customer_name,
-      Van: r.from_location,
-      Naar: r.to_location,
-      Status: statusLabel(r.status),
-      Notitie: r.notes || ''
-    }))
-
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.json_to_sheet(rows)
-    XLSX.utils.book_append_sheet(wb, ws, 'Ritten')
-    XLSX.writeFile(wb, 'ritplanning.xlsx')
+  function driverName(id: string) {
+    return drivers.find((d) => d.id === id)?.name || 'Onbekende chauffeur'
   }
 
-  // ------- FILTER COMPLETED -------
-  const visibleRides = useMemo(
-    () =>
-      showCompleted ? rides : rides.filter((r) => r.status !== 'afgerond'),
-    [rides, showCompleted]
-  )
-
-  // ------- LAYOUT HELPERS -------
   function ridesForDriver(driverId: string) {
-    return visibleRides.filter((r) => r.chauffeur_id === driverId)
+    return rides.filter((r) => r.chauffeur_id === driverId)
   }
 
-  if (loadingUser) {
+  if (!authChecked) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100">
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100">
         Bezig met laden...
-      </main>
+      </div>
     )
   }
 
   if (!user) return null
 
-  // ---------- UI ----------
+  // ---------- LAYOUT ----------
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-10">
-      {/* Top bar */}
-      <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      {/* Header */}
+      <header className="px-6 lg:px-10 pt-6 pb-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+          <h1 className="text-3xl lg:text-4xl font-extrabold tracking-tight">
             Ritplanning
           </h1>
           <p className="text-slate-400 text-sm mt-1">
-            Dagoverzicht per chauffeur. Klik op een kaart om te bewerken.
+            Dagoverzicht van alle chauffeurs
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex items-center gap-2 bg-slate-900/80 rounded-xl px-3 py-2 border border-slate-700">
-            <button
-              onClick={() => changeDay(-1)}
-              className="h-9 w-9 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center"
-            >
-              ←
-            </button>
-            <div className="px-2 text-sm font-medium">
-              {niceDate.charAt(0).toUpperCase() + niceDate.slice(1)}
-            </div>
-            <button
-              onClick={() => changeDay(1)}
-              className="h-9 w-9 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center"
-            >
-              →
-            </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => changeDay(-1)}
+            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium"
+          >
+            ← Vorige dag
+          </button>
+
+          <div className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-sm font-semibold">
+            {formatDateLong(selectedDate)}
           </div>
 
           <button
-            onClick={openNewRideModal}
-            className="h-9 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium shadow-lg shadow-emerald-600/40"
+            onClick={() => changeDay(1)}
+            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium"
+          >
+            Volgende dag →
+          </button>
+
+          <button
+            onClick={goToday}
+            className="px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-sm font-semibold"
+          >
+            Vandaag
+          </button>
+
+          <button
+            onClick={openNewRide}
+            className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-sm font-semibold"
           >
             + Nieuwe rit
           </button>
-
-          <button
-            onClick={exportToExcel}
-            className="h-9 px-4 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-medium border border-slate-600"
-          >
-            Exporteer naar Excel
-          </button>
-
-          <label className="flex items-center gap-2 text-xs text-slate-300">
-            <input
-              type="checkbox"
-              checked={showCompleted}
-              onChange={(e) => setShowCompleted(e.target.checked)}
-              className="accent-emerald-500"
-            />
-            Toon afgeronde ritten
-          </label>
         </div>
       </header>
 
-      {/* Board */}
-      <section className="mt-4">
-        {drivers.length === 0 ? (
-          <div className="text-slate-500 text-sm">
-            Nog geen chauffeurs aangemaakt in Supabase.
+      {/* Lijst per chauffeur onder elkaar */}
+      <main className="px-4 lg:px-10 pb-10">
+        {loading ? (
+          <div className="text-slate-400">Ritten laden...</div>
+        ) : drivers.length === 0 ? (
+          <div className="text-slate-400">
+            Geen chauffeurs gevonden. Voeg chauffeurs toe in Supabase in de
+            tabel <code className="text-xs">drivers</code>.
           </div>
+        ) : rides.length === 0 ? (
+          <div className="text-slate-400">Geen ritten voor deze dag.</div>
         ) : (
-          <div className="overflow-x-auto pb-4">
-            <div
-              className="grid gap-4 min-w-[900px]"
-              style={{
-                gridTemplateColumns: `180px repeat(${drivers.length}, minmax(220px, 1fr))`
-              }}
-            >
-              {/* Header row */}
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-500 pt-3">
-                Chauffeur
-              </div>
-              {drivers.map((driver) => (
-                <div
-                  key={driver.id}
-                  className="text-xs uppercase tracking-[0.2em] text-slate-400 pt-3"
-                >
-                  {driver.name}
-                </div>
-              ))}
+          <div className="space-y-6">
+            {drivers.map((driver) => {
+              const driverRides = ridesForDriver(driver.id)
+              if (driverRides.length === 0) {
+                return null
+              }
 
-              {/* Body row (per driver kolommen) */}
-              <div className="text-xs text-slate-500 pt-2">
-                Tijd / ritten voor {niceDate}
-              </div>
-              {drivers.map((driver) => {
-                const list = ridesForDriver(driver.id)
-                return (
-                  <div
-                    key={driver.id}
-                    className="space-y-3 bg-slate-900/40 rounded-2xl border border-slate-800 p-3 min-h-[120px]"
-                  >
-                    {list.length === 0 ? (
-                      <div className="text-xs text-slate-500 italic">
-                        Geen ritten
-                      </div>
-                    ) : (
-                      list.map((ride) => (
-                        <div
-                          key={ride.id}
-                          onClick={() => openEditRideModal(ride)}
-                          className={`group cursor-pointer rounded-2xl border px-3 py-2 text-xs shadow transition transform hover:-translate-y-0.5 hover:shadow-xl ${statusClasses(
-                            ride.status
-                          )}`}
-                        >
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="font-semibold">
-                              {formatTime(ride.departure_time)} -{' '}
-                              {formatTime(ride.arrival_time)}
-                            </span>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/20">
-                              {statusLabel(ride.status)}
-                            </span>
+              return (
+                <section key={driver.id} className="space-y-3">
+                  {/* Chauffeur kop + scheiding */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                      <h2 className="text-sm font-semibold text-slate-100">
+                        {driver.name}
+                      </h2>
+                    </div>
+                    <span className="text-xs text-slate-500">
+                      {formatDateShort(selectedDate)}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {driverRides.map((ride) => (
+                      <button
+                        key={ride.id}
+                        type="button"
+                        onClick={() => openEditRide(ride)}
+                        className="w-full text-left rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 transition shadow-lg border border-slate-800 px-5 py-4"
+                      >
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <div className="text-sm font-medium text-slate-200">
+                            {timeLabel(ride.departure_time)} –{' '}
+                            {timeLabel(ride.arrival_time)}
                           </div>
-                          <div className="text-sm font-semibold">
+                          <span
+                            className={`inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wide text-white ${statusColor(
+                              ride.status
+                            )}`}
+                          >
+                            {ride.status}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                          <div className="text-lg font-semibold">
                             {ride.customer_name}
                           </div>
-                          <div className="text-[11px] opacity-90">
-                            {ride.from_location} → {ride.to_location}
-                          </div>
-                          {ride.notes && (
-                            <div className="mt-1 text-[11px] opacity-80 flex items-center gap-1">
-                              <span>📝</span>
-                              <span className="truncate">{ride.notes}</span>
-                            </div>
-                          )}
-
-                          {/* Quick status change */}
-                          <div className="mt-2 flex items-center gap-2 text-[11px] opacity-0 group-hover:opacity-100 transition-opacity">
-                            <span className="opacity-70">Status:</span>
-                            <select
-                              value={ride.status}
-                              onChange={(e) =>
-                                updateRideStatus(
-                                  ride.id,
-                                  e.target.value as RideStatus
-                                )
-                              }
-                              onClick={(e) => e.stopPropagation()}
-                              className="bg-black/30 border border-white/20 rounded-full px-2 py-0.5 text-[11px]"
-                            >
-                              <option value="gepland">Gepland</option>
-                              <option value="onderweg">Onderweg</option>
-                              <option value="afgerond">Afgerond</option>
-                              <option value="geannuleerd">Geannuleerd</option>
-                            </select>
+                          <div className="text-xs text-slate-400">
+                            Chauffeur: {driverName(ride.chauffeur_id)}
                           </div>
                         </div>
-                      ))
-                    )}
+
+                        <div className="text-sm text-slate-200 mb-2">
+                          {ride.from_location} → {ride.to_location}
+                        </div>
+
+                        {ride.notes && (
+                          <div className="flex items-start gap-2 text-xs text-slate-300">
+                            <span>📝</span>
+                            <span>{ride.notes}</span>
+                          </div>
+                        )}
+                      </button>
+                    ))}
                   </div>
-                )
-              })}
-            </div>
+
+                  {/* visuele scheiding tussen chauffeurs */}
+                  <div className="border-b border-slate-800 pt-2" />
+                </section>
+              )
+            })}
           </div>
         )}
-      </section>
+      </main>
 
-      {/* ---------- MODAL ---------- */}
-      {modalOpen && form && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-lg bg-slate-950 border border-slate-700 rounded-3xl shadow-2xl p-6 md:p-7">
-            <h2 className="text-xl font-semibold mb-4">
-              {form.id ? 'Rit bewerken' : 'Nieuwe rit'}
-            </h2>
+      {/* Pop-up formulier */}
+      {showForm && form && (
+        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center px-4">
+          <div className="w-full max-w-2xl bg-slate-950 rounded-2xl border border-slate-800 shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+              <h2 className="text-xl font-semibold">
+                {form.id ? 'Rit bewerken' : 'Nieuwe rit'}
+              </h2>
+              <button
+                type="button"
+                onClick={closeForm}
+                className="text-slate-400 hover:text-slate-100 text-sm"
+              >
+                Sluiten ✕
+              </button>
+            </div>
 
-            <div className="space-y-3 text-sm">
-              <div className="flex gap-3">
-                <div className="flex-1">
+            <form onSubmit={handleSave} className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
                   <label className="block text-xs text-slate-400 mb-1">
                     Datum
                   </label>
                   <input
                     type="date"
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
                     value={form.date}
                     onChange={(e) =>
-                      handleFormChange('date', e.target.value)
+                      setForm({ ...form, date: e.target.value })
                     }
-                    className="w-full rounded-lg bg-slate-900 border border-slate-600 px-2 py-1.5 text-sm"
                   />
                 </div>
-                <div className="flex-1">
+
+                <div>
                   <label className="block text-xs text-slate-400 mb-1">
                     Chauffeur
                   </label>
                   <select
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
                     value={form.chauffeur_id}
                     onChange={(e) =>
-                      handleFormChange('chauffeur_id', e.target.value)
+                      setForm({ ...form, chauffeur_id: e.target.value })
                     }
-                    className="w-full rounded-lg bg-slate-900 border border-slate-600 px-2 py-1.5 text-sm"
                   >
+                    <option value="">Kies chauffeur</option>
                     {drivers.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name}
@@ -571,97 +459,94 @@ export default function Page() {
                     ))}
                   </select>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  Klantnaam
-                </label>
-                <input
-                  value={form.customer_name}
-                  onChange={(e) =>
-                    handleFormChange('customer_name', e.target.value)
-                  }
-                  className="w-full rounded-lg bg-slate-900 border border-slate-600 px-3 py-1.5 text-sm"
-                  placeholder="Bijv. Tyrepoint"
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="block text-xs text-slate-400 mb-1">
-                    Van
-                  </label>
-                  <input
-                    value={form.from_location}
-                    onChange={(e) =>
-                      handleFormChange('from_location', e.target.value)
-                    }
-                    className="w-full rounded-lg bg-slate-900 border border-slate-600 px-3 py-1.5 text-sm"
-                    placeholder="Bijv. Zwolle"
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs text-slate-400 mb-1">
-                    Naar
-                  </label>
-                  <input
-                    value={form.to_location}
-                    onChange={(e) =>
-                      handleFormChange('to_location', e.target.value)
-                    }
-                    className="w-full rounded-lg bg-slate-900 border border-slate-600 px-3 py-1.5 text-sm"
-                    placeholder="Bijv. Den Ham"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3">
-                <div className="flex-1">
+                <div>
                   <label className="block text-xs text-slate-400 mb-1">
                     Vertrek
                   </label>
                   <input
                     type="time"
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
                     value={form.departure_time}
                     onChange={(e) =>
-                      handleFormChange('departure_time', e.target.value)
+                      setForm({ ...form, departure_time: e.target.value })
                     }
-                    className="w-full rounded-lg bg-slate-900 border border-slate-600 px-3 py-1.5 text-sm"
                   />
                 </div>
-                <div className="flex-1">
+
+                <div>
                   <label className="block text-xs text-slate-400 mb-1">
                     Aankomst
                   </label>
                   <input
                     type="time"
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
                     value={form.arrival_time}
                     onChange={(e) =>
-                      handleFormChange('arrival_time', e.target.value)
+                      setForm({ ...form, arrival_time: e.target.value })
                     }
-                    className="w-full rounded-lg bg-slate-900 border border-slate-600 px-3 py-1.5 text-sm"
                   />
                 </div>
-              </div>
 
-              <div className="flex gap-3">
-                <div className="flex-1">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Klantnaam
+                  </label>
+                  <input
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
+                    value={form.customer_name}
+                    onChange={(e) =>
+                      setForm({ ...form, customer_name: e.target.value })
+                    }
+                    placeholder="Bijv. Tyrepoint"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-xs text-slate-400 mb-1">
                     Status
                   </label>
                   <select
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
                     value={form.status}
                     onChange={(e) =>
-                      handleFormChange('status', e.target.value as RideStatus)
+                      setForm({ ...form, status: e.target.value })
                     }
-                    className="w-full rounded-lg bg-slate-900 border border-slate-600 px-3 py-1.5 text-sm"
                   >
                     <option value="gepland">Gepland</option>
                     <option value="onderweg">Onderweg</option>
+                    <option value="aangekomen">Aangekomen</option>
                     <option value="afgerond">Afgerond</option>
                     <option value="geannuleerd">Geannuleerd</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Van
+                  </label>
+                  <input
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
+                    value={form.from_location}
+                    onChange={(e) =>
+                      setForm({ ...form, from_location: e.target.value })
+                    }
+                    placeholder="Vertreklocatie"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Naar
+                  </label>
+                  <input
+                    className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
+                    value={form.to_location}
+                    onChange={(e) =>
+                      setForm({ ...form, to_location: e.target.value })
+                    }
+                    placeholder="Bestemming"
+                  />
                 </div>
               </div>
 
@@ -670,40 +555,39 @@ export default function Page() {
                   Notitie
                 </label>
                 <textarea
+                  className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm min-h-[80px]"
                   value={form.notes}
                   onChange={(e) =>
-                    handleFormChange('notes', e.target.value)
+                    setForm({ ...form, notes: e.target.value })
                   }
-                  rows={3}
-                  className="w-full rounded-lg bg-slate-900 border border-slate-600 px-3 py-1.5 text-sm resize-none"
-                  placeholder="Bijv. kenteken, referentie, bijzonderheden..."
+                  placeholder="Kenteken, referentie, bijzonderheden..."
                 />
               </div>
-            </div>
 
-            <div className="mt-6 flex justify-between gap-3">
-              <button
-                onClick={closeModal}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm"
-                disabled={modalSaving}
-              >
-                Annuleren
-              </button>
-              <button
-                onClick={saveRide}
-                className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-medium shadow-emerald-600/40 shadow-lg disabled:opacity-60"
-                disabled={modalSaving}
-              >
-                {modalSaving
-                  ? 'Opslaan...'
-                  : form.id
-                  ? 'Wijzigingen opslaan'
-                  : 'Rit opslaan'}
-              </button>
-            </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeForm}
+                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm"
+                >
+                  Annuleren
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-sm font-semibold disabled:opacity-60"
+                >
+                  {saving
+                    ? 'Opslaan...'
+                    : form.id
+                    ? 'Rit opslaan'
+                    : 'Rit aanmaken'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
-    </main>
+    </div>
   )
 }
