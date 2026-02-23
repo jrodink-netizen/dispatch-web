@@ -36,13 +36,13 @@ export default function Page() {
   async function loadRides() {
     const formatted = selectedDate.toISOString().split('T')[0]
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('rides')
       .select('*')
       .eq('date', formatted)
       .order('departure_time', { ascending: true })
 
-    setRides(data || [])
+    if (!error) setRides(data || [])
   }
 
   function changeDay(amount: number) {
@@ -128,17 +128,22 @@ export default function Page() {
         )}
 
         {rides.map((ride) => {
-          const isOwnRide = ride.chauffeur_id === user.id
+          const isOwnRide =
+            ride.chauffeur_id &&
+            user &&
+            ride.chauffeur_id === user.id
 
           return (
             <div
               key={ride.id}
               onClick={() => {
-                if (isOwnRide) setEditingRide(ride)
+                if (isOwnRide) {
+                  setEditingRide(ride)
+                }
               }}
               className={`p-4 rounded shadow ${
                 getStatusColor(ride.status)
-              } ${isOwnRide ? 'cursor-pointer' : 'opacity-70'}`}
+              } ${isOwnRide ? 'cursor-pointer' : 'opacity-70 cursor-default'}`}
             >
               <div className="text-sm">
                 {ride.departure_time?.slice(0, 5)} -{' '}
@@ -156,6 +161,12 @@ export default function Page() {
               {ride.notes && (
                 <div className="text-xs mt-2 opacity-80">
                   📝 {ride.notes}
+                </div>
+              )}
+
+              {!isOwnRide && (
+                <div className="text-xs mt-2 italic opacity-60">
+                  Alleen lezen
                 </div>
               )}
             </div>
